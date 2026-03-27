@@ -315,6 +315,55 @@ def analytics_3d_data_api():
         return _handle_service_error(error)
 
 
+@admin_bp.get("/api/analytics/forecast")
+@admin_required
+def analytics_forecast_api():
+    try:
+        horizon = (request.args.get("horizon") or "1d").strip().lower()
+        data = get_services()["market_intelligence"].get_forecast(horizon)
+        return jsonify(data)
+    except ServiceError as error:
+        return _handle_service_error(error)
+
+
+@admin_bp.get("/api/analytics/crop-trends")
+@admin_required
+def analytics_crop_trends_api():
+    try:
+        horizon = (request.args.get("horizon") or "1d").strip().lower()
+        data = get_services()["market_intelligence"].get_crop_trends(horizon)
+        return jsonify(data)
+    except ServiceError as error:
+        return _handle_service_error(error)
+
+
+@admin_bp.post("/api/analytics/refresh")
+@admin_required
+def analytics_refresh_api():
+    try:
+        notify = str((request.get_json(silent=True) or {}).get("notify", "true")).lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        services = get_services()
+        data = services["market_intelligence"].refresh_insights(notify=notify)
+        services["activity"].log(
+            current_admin_id(),
+            action="analytics_refresh",
+            entity_type="market_intelligence",
+            entity_id=None,
+            details={
+                "notify": notify,
+                "notifications_sent": data.get("notifications_sent", 0),
+            },
+        )
+        return jsonify(data)
+    except ServiceError as error:
+        return _handle_service_error(error)
+
+
 @admin_bp.get("/api/audit-logs")
 @admin_required
 def audit_logs_api():

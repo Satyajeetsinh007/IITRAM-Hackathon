@@ -9,11 +9,42 @@
       <h2 class="text-2xl font-semibold">Analytics</h2>
       <p class="mt-1 text-sm text-slate-600">Orders, GMV trend, category activity, and user growth.</p>
     </div>
-    <select id="analytics-range" class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
-      <option value="7d">Last 7 days</option>
-      <option value="30d" selected>Last 30 days</option>
-      <option value="90d">Last 90 days</option>
-    </select>
+    <div class="flex flex-wrap items-center gap-2">
+      <select id="analytics-range" class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+        <option value="7d">Last 7 days</option>
+        <option value="30d" selected>Last 30 days</option>
+        <option value="90d">Last 90 days</option>
+      </select>
+      <button id="refresh-ai-btn" class="rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
+        Run Forecast Now
+      </button>
+    </div>
+  </div>
+
+  <section class="grid gap-4 xl:grid-cols-3">
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <h3 class="text-base font-semibold">Order Forecast</h3>
+        <p id="forecast-generated-at" class="text-xs text-slate-500">Updated: -</p>
+      </div>
+      <div id="forecast-cards" class="grid gap-3 md:grid-cols-3">
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">Loading forecast...</div>
+      </div>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <h3 class="text-base font-semibold">Trending Vegetables</h3>
+        <select id="trend-horizon" class="rounded-md border border-slate-300 px-2 py-1 text-xs">
+          <option value="1d">1 day</option>
+          <option value="3d">3 days</option>
+          <option value="7d">7 days</option>
+        </select>
+      </div>
+      <div id="trend-warning" class="mb-2 hidden rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700"></div>
+      <div id="trend-list" class="space-y-2">
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">Loading trends...</div>
+      </div>
+    </div>
   </div>
 
   <section class="grid gap-3 sm:grid-cols-3">
@@ -190,6 +221,126 @@
     );
   }
 
+  function confidenceTone(value) {
+    const score = Number(value || 0);
+    if (score >= 80) return 'text-emerald-700 bg-emerald-50 border-emerald-200';
+    if (score >= 60) return 'text-amber-700 bg-amber-50 border-amber-200';
+    return 'text-rose-700 bg-rose-50 border-rose-200';
+  }
+
+  function renderForecastCards(items) {
+    const root = document.getElementById('forecast-cards');
+    if (!root) return;
+    if (!Array.isArray(items) || !items.length) {
+      root.innerHTML = '<div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">No forecast data available.</div>';
+      return;
+    }
+
+    root.innerHTML = items.map((item) => {
+      const tone = confidenceTone(item.confidence);
+      const weather = item.weather || {};
+      const rain = weather.precipitation_sum;
+      return `
+        <article class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p class="text-xs font-medium uppercase tracking-wide text-slate-500">${AdminApp.escapeHtml(item.horizon || '')}</p>
+          <p class="mt-1 text-2xl font-semibold text-slate-900">${item.predicted_orders ?? 0}</p>
+          <p class="text-xs text-slate-500">Expected orders on ${AdminApp.escapeHtml(item.forecast_for_date || '-')}</p>
+          <div class="mt-3 flex items-center justify-between gap-2">
+            <span class="rounded-full border px-2 py-0.5 text-xs ${tone}">Confidence ${Number(item.confidence || 0)}%</span>
+            <span class="text-xs text-slate-500">Rain: ${rain === null || rain === undefined ? '-' : `${rain}mm`}</span>
+          </div>
+          ${item.warning ? `<p class="mt-2 text-xs text-amber-700">${AdminApp.escapeHtml(item.warning)}</p>` : ''}
+        </article>
+      `;
+    }).join('');
+  }
+
+  function renderTrendRows(payload) {
+    const list = document.getElementById('trend-list');
+    const warning = document.getElementById('trend-warning');
+    if (!list || !warning) return;
+
+    const items = payload.items || [];
+    if (payload.warning) {
+      warning.textContent = payload.warning;
+      warning.classList.remove('hidden');
+    } else {
+      warning.classList.add('hidden');
+      warning.textContent = '';
+    }
+
+    if (!items.length) {
+      list.innerHTML = '<div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">No high-confidence trends yet.</div>';
+      return;
+    }
+
+    list.innerHTML = items.slice(0, 8).map((item) => {
+      const tone = confidenceTone(item.confidence);
+      const signalTone = item.signal === 'uptrend'
+        ? 'bg-emerald-100 text-emerald-700'
+        : item.signal === 'downtrend'
+          ? 'bg-rose-100 text-rose-700'
+          : 'bg-slate-100 text-slate-700';
+      return `
+        <article class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <div class="flex items-center justify-between gap-2">
+            <p class="text-sm font-semibold text-slate-900">${AdminApp.escapeHtml((item.crop || '-').toUpperCase())}</p>
+            <span class="rounded-full px-2 py-0.5 text-xs font-medium ${signalTone}">${AdminApp.escapeHtml(item.signal || '')}</span>
+          </div>
+          <div class="mt-2 flex flex-wrap gap-2 text-xs">
+            <span class="rounded-full border px-2 py-0.5 ${tone}">Trend ${Number(item.trend_score || 0)}</span>
+            <span class="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">Demand ${Number(item.demand_growth_pct || 0)}%</span>
+            <span class="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">Price ${Number(item.price_momentum_pct || 0)}%</span>
+          </div>
+        </article>
+      `;
+    }).join('');
+  }
+
+  async function loadMarketIntelligence() {
+    const trendSelect = document.getElementById('trend-horizon');
+    const trendHorizon = trendSelect ? trendSelect.value : '1d';
+
+    const firstForecast = await AdminApp.apiFetch('/admin/api/analytics/forecast?horizon=1d');
+    const responses = await Promise.all([
+      AdminApp.apiFetch('/admin/api/analytics/forecast?horizon=3d'),
+      AdminApp.apiFetch('/admin/api/analytics/forecast?horizon=7d'),
+      AdminApp.apiFetch(`/admin/api/analytics/crop-trends?horizon=${trendHorizon}`),
+    ]);
+
+    const [f3, f7, trends] = responses;
+    const f1 = firstForecast;
+    renderForecastCards([f1, f3, f7]);
+    renderTrendRows(trends);
+
+    const generated = [f1.generated_at, f3.generated_at, f7.generated_at].filter(Boolean).sort().reverse()[0];
+    const el = document.getElementById('forecast-generated-at');
+    if (el) {
+      el.textContent = `Updated: ${generated ? AdminApp.formatDate(generated) : '-'}`;
+    }
+  }
+
+  async function refreshMarketIntelligence() {
+    const button = document.getElementById('refresh-ai-btn');
+    if (!button) return;
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Refreshing...';
+    try {
+      await AdminApp.apiFetch('/admin/api/analytics/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ notify: true }),
+      });
+      AdminApp.notify('AI insights refreshed successfully', 'success');
+      await loadMarketIntelligence();
+    } catch (error) {
+      AdminApp.notify(error.message, 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }
+
   function render3dFallback(message) {
     const chart = document.getElementById('3d-chart');
     chart.innerHTML = `<div class="flex h-full items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-sm text-slate-500">${AdminApp.escapeHtml(message)}</div>`;
@@ -339,6 +490,7 @@
         </tr>
       `).join('') || '<tr><td colspan="2" class="px-3 py-3 text-center text-slate-500">No category data</td></tr>';
 
+      await loadMarketIntelligence();
       await load3dChart(rangeKey);
     } catch (error) {
       AdminApp.notify(error.message, 'error');
@@ -348,6 +500,8 @@
 
   const rangeSelect = document.getElementById('analytics-range');
   rangeSelect.addEventListener('change', () => loadAnalytics(rangeSelect.value));
+  document.getElementById('trend-horizon').addEventListener('change', loadMarketIntelligence);
+  document.getElementById('refresh-ai-btn').addEventListener('click', refreshMarketIntelligence);
   document.getElementById('chart-3d-fullscreen').addEventListener('click', toggle3dFullscreen);
   document.addEventListener('fullscreenchange', handle3dFullscreenChange);
   window.addEventListener('resize', () => {

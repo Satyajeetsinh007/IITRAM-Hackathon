@@ -36,6 +36,7 @@
           <tr>
             <th class="px-3 py-2">Transaction Ref</th>
             <th class="px-3 py-2">Order #</th>
+            <th class="px-3 py-2">Time</th>
             <th class="px-3 py-2">Amount</th>
             <th class="px-3 py-2">Payment Status</th>
             <th class="px-3 py-2">Review State</th>
@@ -77,6 +78,7 @@
         <tr class="border-b border-slate-100">
           <td class="px-3 py-2">${AdminApp.escapeHtml(item.transaction_ref || '-')}</td>
           <td class="px-3 py-2">${AdminApp.escapeHtml(item.order_number || '-')}</td>
+          <td class="px-3 py-2">${AdminApp.formatDate(item.created_at || item.updated_at || null)}</td>
           <td class="px-3 py-2">${AdminApp.formatCurrency(item.amount || 0)}</td>
           <td class="px-3 py-2">
             <select data-transaction-payment="${item.id}" class="rounded border border-slate-300 px-2 py-1">
@@ -92,7 +94,7 @@
             <button data-transaction-id="${item.id}" class="update-transaction rounded bg-slate-900 px-3 py-1.5 text-white">Update</button>
           </td>
         </tr>
-      `).join('') || '<tr><td colspan="6" class="px-3 py-3 text-center text-slate-500">No transactions found</td></tr>';
+      `).join('') || '<tr><td colspan="7" class="px-3 py-3 text-center text-slate-500">No transactions found</td></tr>';
 
       AdminApp.renderPagination('transactions-pagination', data.pagination, loadTransactions);
     } catch (error) {

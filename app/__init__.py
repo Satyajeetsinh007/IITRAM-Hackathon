@@ -8,6 +8,7 @@ from app.admin.routes import admin_bp
 from app.cli import register_commands
 from app.config import CONFIG_BY_NAME
 from app.extensions import csrf
+from app.farmer.routes import farmer_bp
 from app.offers.routes import offers_bp
 from app.repositories.schema import ensure_database_structure
 
@@ -47,6 +48,7 @@ def create_app(config_name=None, test_config=None):
     register_commands(app)
     app.register_blueprint(admin_bp)
     app.register_blueprint(offers_bp)
+    app.register_blueprint(farmer_bp)
 
     @app.get("/")
     def healthcheck():
@@ -61,6 +63,7 @@ def create_app(config_name=None, test_config=None):
         wants_json = (
             request.path.startswith("/admin/api")
             or request.path.startswith("/offers")
+            or request.path.startswith("/farmer/api")
             or request.accept_mimetypes.best == "application/json"
         )
         code = getattr(error, "code", 500)

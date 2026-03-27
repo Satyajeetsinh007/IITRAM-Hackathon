@@ -2,6 +2,7 @@ from datetime import timedelta
 
 import mongomock
 import pytest
+import uuid
 from werkzeug.security import generate_password_hash
 
 from app import create_app
@@ -15,6 +16,7 @@ def mongo_client():
 
 @pytest.fixture
 def app(mongo_client):
+    model_path = f"/tmp/farm_to_market_test_model_{uuid.uuid4().hex}.pkl"
     app = create_app(
         test_config={
             "TESTING": True,
@@ -23,6 +25,10 @@ def app(mongo_client):
             "MONGO_CLIENT": mongo_client,
             "DATABASE_NAME": "farm_to_market_test",
             "ADMIN_PAGE_SIZE": 20,
+            "AI_MODEL_STORE_PATH": model_path,
+            "AI_MODEL_VERSION": "ml-lite-v1-test",
+            "AI_MIN_TRAIN_SAMPLES": 20,
+            "AI_RETRAIN_HOURS": 1,
         }
     )
 

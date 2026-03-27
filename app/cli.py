@@ -5,8 +5,13 @@ import click
 from flask import current_app
 from werkzeug.security import generate_password_hash
 
+from app.repositories.market_intelligence_repository import (
+    MarketIntelligenceRepository,
+)
 from app.repositories.schema import ensure_database_structure
 from app.services.analytics_service import compute_quality_score
+from app.services.market_intelligence_service import MarketIntelligenceService
+from app.services.weather_client import WeatherClient
 from app.utils.time_utils import utcnow
 
 FARM_PRODUCTS = {
@@ -254,6 +259,157 @@ def _build_demo_activity_logs(admin_id, users, products, orders, transactions, c
     return logs
 
 
+def _extract_crop_key(name):
+    tokens = str(name or "").strip().lower().split()
+    return tokens[-1] if tokens else ""
+
+
+def _build_trend_seed_offers(products, farmers, buyers, offers_per_crop=18):
+    if not products or not farmers or not buyers:
+        return []
+
+    now = utcnow()
+    offers_per_crop = max(int(offers_per_crop), 8)
+    farmer_by_email = {
+        str(farmer.get("email") or "").strip().lower(): str(farmer["_id"])
+        for farmer in farmers
+        if farmer.get("_id")
+    }
+
+    crop_products = {}
+    for product in products:
+        crop = _extract_crop_key(product.get("name"))
+        if not crop:
+            continue
+        crop_products.setdefault(crop, []).append(product)
+
+    if not crop_products:
+        return []
+
+    top_crops = sorted(
+        crop_products.keys(),
+        key=lambda key: len(crop_products[key]),
+        reverse=True,
+    )[:3]
+
+    rows = []
+
+    def resolve_farmer_id(product_doc):
+        seller_email = str(product_doc.get("seller_email") or "").strip().lower()
+        if seller_email and seller_email in farmer_by_email:
+            return farmer_by_email[seller_email]
+        owner_id = product_doc.get("farmer_id") or product_doc.get("seller_id")
+        if owner_id:
+            return str(owner_id)
+        fallback = random.choice(farmers)
+        return str(fallback["_id"])
+
+    def make_offer(product_doc, buyer_doc, farmer_id, price, quantity, updated_at):
+        created_at = updated_at - timedelta(hours=random.randint(2, 36))
+        history = [
+            {
+                "event": "created",
+                "actor_id": str(buyer_doc["_id"]),
+                "actor_role": "buyer",
+                "price": float(price),
+                "quantity": int(quantity),
+                "note": "Demo trend seed offer",
+                "at": created_at,
+            },
+            {
+                "event": "accepted",
+                "actor_id": str(farmer_id),
+                "actor_role": "farmer",
+                "price": float(price),
+                "quantity": int(quantity),
+                "note": "Accepted for trend simulation",
+                "at": updated_at,
+            },
+        ]
+        return {
+            "product_id": str(product_doc["_id"]),
+            "buyer_id": str(buyer_doc["_id"]),
+            "farmer_id": str(farmer_id),
+            "price": float(price),
+            "quantity": int(max(quantity, 1)),
+            "status": "accepted",
+            "history": history,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "expires_at": created_at + timedelta(days=5),
+            "seed_tag": "trend_demo_v1",
+        }
+
+    for crop in top_crops:
+        products_for_crop = crop_products.get(crop) or []
+        if not products_for_crop:
+            continue
+
+        previous_count = offers_per_crop
+        recent_count = offers_per_crop
+
+        base_qty = random.randint(10, 18)
+        base_price = random.randint(900, 1800)
+        qty_growth = random.uniform(1.35, 1.68)
+        price_growth = random.uniform(1.30, 1.64)
+
+        for _ in range(previous_count):
+            product = random.choice(products_for_crop)
+            buyer = random.choice(buyers)
+            farmer_id = resolve_farmer_id(product)
+            updated_at = now - timedelta(
+                days=random.randint(15, 27),
+                hours=random.randint(0, 23),
+                minutes=random.randint(0, 59),
+            )
+            qty = max(int(round(base_qty + random.uniform(-2, 3))), 1)
+            price = max(int(round(base_price + random.uniform(-120, 180))), 1)
+            rows.append(make_offer(product, buyer, farmer_id, price, qty, updated_at))
+
+        for _ in range(recent_count):
+            product = random.choice(products_for_crop)
+            buyer = random.choice(buyers)
+            farmer_id = resolve_farmer_id(product)
+            updated_at = now - timedelta(
+                days=random.randint(0, 13),
+                hours=random.randint(0, 23),
+                minutes=random.randint(0, 59),
+            )
+            qty = max(
+                int(round((base_qty * qty_growth) + random.uniform(-2, 4))),
+                1,
+            )
+            price = max(
+                int(round((base_price * price_growth) + random.uniform(-150, 260))),
+                1,
+            )
+            rows.append(make_offer(product, buyer, farmer_id, price, qty, updated_at))
+
+    return rows
+
+
+def _build_market_intelligence_service(config, db):
+    return MarketIntelligenceService(
+        MarketIntelligenceRepository(db),
+        weather_client=WeatherClient(
+            provider=config.get("WEATHER_PROVIDER", "open_meteo"),
+            latitude=config.get("WEATHER_LAT", 23.0225),
+            longitude=config.get("WEATHER_LON", 72.5714),
+            timeout_sec=config.get("WEATHER_TIMEOUT_SEC", 4),
+        ),
+        refresh_hours=config.get("AI_REFRESH_HOURS", 6),
+        min_confidence=config.get("AI_MIN_CONFIDENCE", 70),
+        min_trend_score=config.get("AI_MIN_TREND_SCORE", 65),
+        model_version=config.get("AI_MODEL_VERSION", "ml-lite-v1"),
+        model_store_path=config.get(
+            "AI_MODEL_STORE_PATH",
+            "artifacts/order_forecast_model.pkl",
+        ),
+        min_train_samples=config.get("AI_MIN_TRAIN_SAMPLES", 45),
+        retrain_hours=config.get("AI_RETRAIN_HOURS", 24),
+    )
+
+
 def register_commands(app):
     @app.cli.command("init-db")
     @click.option(
@@ -308,13 +464,31 @@ def register_commands(app):
         show_default=True,
         type=int,
     )
+    @click.option("--offers", "offers_count", default=160, show_default=True, type=int)
     @click.option(
         "--reset",
         is_flag=True,
         default=False,
-        help="Delete existing users/products/orders/transactions/activity logs before seeding.",
+        help=(
+            "Delete existing users/products/orders/transactions/offers/activity logs "
+            "before seeding."
+        ),
     )
-    def seed_demo_data(users_count, products_count, orders_count, activity_count, reset):
+    @click.option(
+        "--refresh-ai/--no-refresh-ai",
+        default=True,
+        show_default=True,
+        help="Run AI refresh immediately so forecast/trending panels use fresh seeded data.",
+    )
+    def seed_demo_data(
+        users_count,
+        products_count,
+        orders_count,
+        activity_count,
+        offers_count,
+        reset,
+        refresh_ai,
+    ):
         db = current_app.db
         ensure_database_structure(db, apply_validators=True)
 
@@ -323,25 +497,42 @@ def register_commands(app):
             db.products.delete_many({})
             db.orders.delete_many({})
             db.transactions.delete_many({})
+            db.offers.delete_many({})
             db.admin_activity_logs.delete_many({})
+            db.ml_order_forecasts.delete_many({})
+            db.ml_crop_trends.delete_many({})
+            db.farmer_notifications.delete_many({})
             click.echo("Cleared existing marketplace demo collections.")
 
         users = _build_demo_users(users_count)
         if users:
-            db.users.insert_many(users)
+            user_insert = db.users.insert_many(users)
+            for idx, oid in enumerate(user_insert.inserted_ids):
+                users[idx]["_id"] = oid
 
-        farmers = users[: int(len(users) * 0.55)]
-        buyers = users[int(len(users) * 0.55) :]
+        farmers = [user for user in users if user.get("role") == "farmer"]
+        buyers = [user for user in users if user.get("role") == "buyer"]
 
         products = _build_demo_products(products_count, farmers)
         if products:
-            db.products.insert_many(products)
+            product_insert = db.products.insert_many(products)
+            for idx, oid in enumerate(product_insert.inserted_ids):
+                products[idx]["_id"] = oid
 
         orders, transactions = _build_demo_orders_and_transactions(orders_count, buyers)
         if orders:
             db.orders.insert_many(orders)
         if transactions:
             db.transactions.insert_many(transactions)
+
+        offers = _build_trend_seed_offers(
+            products=[product for product in products if product.get("category") == "vegetable"],
+            farmers=farmers,
+            buyers=buyers,
+            offers_per_crop=max(offers_count // 3, 8),
+        )
+        if offers:
+            db.offers.insert_many(offers)
 
         admin = db.admin_users.find_one({}, sort=[("created_at", 1)])
         logs = _build_demo_activity_logs(
@@ -360,7 +551,94 @@ def register_commands(app):
         click.echo(f"- products: {len(products)}")
         click.echo(f"- orders: {len(orders)}")
         click.echo(f"- transactions: {len(transactions)}")
+        click.echo(f"- offers: {len(offers)}")
         click.echo(f"- activity logs: {len(logs)}")
+
+        if refresh_ai:
+            config = current_app.config
+            service = _build_market_intelligence_service(config, current_app.db)
+            result = service.refresh_insights(notify=False)
+            click.echo("AI insights refreshed after seeding:")
+            click.echo(f"- generated_at: {result.get('generated_at')}")
+            click.echo(
+                f"- trend_items_1d: {len((result.get('trends') or {}).get('1d') or [])}"
+            )
+
+    @app.cli.command("seed-trend-offers")
+    @click.option(
+        "--offers-per-crop",
+        default=20,
+        show_default=True,
+        type=int,
+        help="How many recent offers to create per top vegetable crop.",
+    )
+    @click.option(
+        "--reset",
+        is_flag=True,
+        default=False,
+        help="Delete only previously seeded trend offers (seed_tag=trend_demo_v1).",
+    )
+    @click.option(
+        "--refresh-ai/--no-refresh-ai",
+        default=True,
+        show_default=True,
+        help="Refresh AI insights after offer seeding.",
+    )
+    def seed_trend_offers(offers_per_crop, reset, refresh_ai):
+        """Seed offer signals so Trending Vegetables panel has meaningful demo data."""
+        db = current_app.db
+        ensure_database_structure(db, apply_validators=True)
+
+        if reset:
+            removed = db.offers.delete_many({"seed_tag": "trend_demo_v1"})
+            click.echo(f"Removed {removed.deleted_count} previously seeded trend offers.")
+
+        farmers = list(
+            db.users.find(
+                {"role": "farmer"},
+                {"_id": 1, "email": 1, "role": 1, "status": 1},
+            )
+        )
+        buyers = list(
+            db.users.find(
+                {"role": "buyer"},
+                {"_id": 1, "email": 1, "role": 1, "status": 1},
+            )
+        )
+        products = list(
+            db.products.find(
+                {"category": "vegetable"},
+                {"_id": 1, "name": 1, "category": 1, "seller_email": 1},
+            )
+        )
+
+        if not farmers or not buyers or not products:
+            click.echo(
+                "Seed users/products first. Required: farmers, buyers, and vegetable products."
+            )
+            return
+
+        rows = _build_trend_seed_offers(
+            products=products,
+            farmers=farmers,
+            buyers=buyers,
+            offers_per_crop=offers_per_crop,
+        )
+        if not rows:
+            click.echo("No trend offers generated from current dataset.")
+            return
+
+        db.offers.insert_many(rows)
+        click.echo(f"Inserted {len(rows)} trend-seed offers.")
+
+        if refresh_ai:
+            service = _build_market_intelligence_service(current_app.config, db)
+            result = service.refresh_insights(notify=False)
+            click.echo("AI insights refreshed:")
+            click.echo(f"- generated_at: {result.get('generated_at')}")
+            click.echo(
+                f"- trend_items_1d: {len((result.get('trends') or {}).get('1d') or [])}"
+            )
 
     @app.cli.command("seed-3d-data")
     @click.option("--count", default=140, show_default=True, type=int)
@@ -411,3 +689,19 @@ def register_commands(app):
         if rows:
             db.orders.insert_many(rows)
         click.echo(f"Seeded {len(rows)} 3D analytics order rows.")
+
+    @app.cli.command("refresh-ai-insights")
+    @click.option(
+        "--notify/--no-notify",
+        default=False,
+        show_default=True,
+        help="Create farmer notifications from high-confidence crop trends.",
+    )
+    def refresh_ai_insights(notify):
+        """Refresh AI forecasts and crop trends, then optionally notify farmers."""
+        service = _build_market_intelligence_service(current_app.config, current_app.db)
+
+        result = service.refresh_insights(notify=notify)
+        click.echo("AI insights refreshed successfully:")
+        click.echo(f"- generated_at: {result.get('generated_at')}")
+        click.echo(f"- notifications_sent: {result.get('notifications_sent', 0)}")

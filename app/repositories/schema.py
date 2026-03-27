@@ -181,6 +181,80 @@ COLLECTION_SCHEMAS = {
             },
         }
     },
+    "ml_order_forecasts": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "horizon_days",
+                "forecast_for_date",
+                "predicted_orders",
+                "confidence",
+                "model_version",
+                "created_at",
+            ],
+            "properties": {
+                "horizon_days": {"bsonType": ["int", "long"]},
+                "forecast_for_date": {"bsonType": "date"},
+                "predicted_orders": {"bsonType": ["double", "int", "long", "decimal"]},
+                "confidence": {"bsonType": ["double", "int", "long", "decimal"]},
+                "model_version": {"bsonType": "string"},
+                "weather": {"bsonType": ["object", "null"]},
+                "created_at": {"bsonType": "date"},
+            },
+        }
+    },
+    "ml_crop_trends": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "horizon_days",
+                "crop",
+                "trend_score",
+                "confidence",
+                "demand_growth_pct",
+                "price_momentum_pct",
+                "signal",
+                "created_at",
+            ],
+            "properties": {
+                "horizon_days": {"bsonType": ["int", "long"]},
+                "crop": {"bsonType": "string"},
+                "trend_score": {"bsonType": ["double", "int", "long", "decimal"]},
+                "confidence": {"bsonType": ["double", "int", "long", "decimal"]},
+                "demand_growth_pct": {"bsonType": ["double", "int", "long", "decimal"]},
+                "price_momentum_pct": {"bsonType": ["double", "int", "long", "decimal"]},
+                "signal": {"bsonType": "string"},
+                "created_at": {"bsonType": "date"},
+            },
+        }
+    },
+    "farmer_notifications": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "farmer_id",
+                "type",
+                "title",
+                "message",
+                "payload",
+                "priority",
+                "is_read",
+                "created_at",
+            ],
+            "properties": {
+                "farmer_id": {"bsonType": "string"},
+                "type": {"bsonType": "string"},
+                "title": {"bsonType": "string"},
+                "message": {"bsonType": "string"},
+                "payload": {"bsonType": "object"},
+                "priority": {"enum": ["low", "medium", "high"]},
+                "is_read": {"bsonType": "bool"},
+                "created_at": {"bsonType": "date"},
+                "expires_at": {"bsonType": ["date", "null"]},
+                "read_at": {"bsonType": ["date", "null"]},
+            },
+        }
+    },
 }
 
 

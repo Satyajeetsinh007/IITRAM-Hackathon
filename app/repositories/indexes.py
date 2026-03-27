@@ -1,4 +1,4 @@
-from pymongo import ASCENDING
+from pymongo import ASCENDING, DESCENDING
 
 
 def ensure_indexes(db):
@@ -25,3 +25,16 @@ def ensure_indexes(db):
     db.admin_activity_logs.create_index([("created_at", ASCENDING)])
     db.admin_alerts.create_index([("is_resolved", ASCENDING), ("triggered_at", ASCENDING)])
     db.admin_alerts.create_index([("type", ASCENDING), ("is_resolved", ASCENDING)])
+    db.ml_order_forecasts.create_index(
+        [("forecast_for_date", ASCENDING), ("horizon_days", ASCENDING)],
+        unique=True,
+    )
+    db.ml_crop_trends.create_index(
+        [("created_at", ASCENDING), ("crop", ASCENDING), ("horizon_days", ASCENDING)]
+    )
+    db.farmer_notifications.create_index(
+        [("farmer_id", ASCENDING), ("is_read", ASCENDING), ("created_at", DESCENDING)]
+    )
+    db.farmer_notifications.create_index(
+        [("farmer_id", ASCENDING), ("type", ASCENDING), ("created_at", ASCENDING)]
+    )
